@@ -1,0 +1,46 @@
+[project]
+name = "db-injector"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "calleja", email = "lecn99@hotmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.5",
+    "paramiko>=3.5.1,<4",
+    "pymysql>=1.1.2",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.52",
+    "sshtunnel>=0.4.0",
+]
+
+[project.scripts]
+#not using the __main__.py in this config
+#be sure to ignore the "src" path... apparently it's not a parent folder to 'db_injector'; src = source root
+#ultimately project.scripts must point to a module and not a path; in this case 'cli' is the module
+db-injector = "db_injector.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# Puts src/ on sys.path for the test session, so tests import the package by its
+# real installed name (`db_injector`) instead of the path-dependent `src.` prefix.
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "integration: opens a real SSH tunnel to the droplet; needs network + secrets",
+]
+# Integration tests are opt-in: `uv run pytest -m integration`.
+addopts = "-m 'not integration'"
