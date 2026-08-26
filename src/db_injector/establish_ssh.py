@@ -153,7 +153,9 @@ def db_tunnel(remote_port: int = 3306, local_port: int = 0, env_path: Path | Non
         ssh_username=cfg["user"],
         ssh_password=cfg["password"],
         remote_bind_address=("localhost", remote_port),
-        local_bind_address=("127.0.0.1", local_port),
+        local_bind_address=("127.0.0.1", local_port), 
+        allow_agent=False,
+        host_pkey_directories=[]
     ) as tunnel:
     #the function does not return at the yield. It suspends. Its stack frame — including the half-finished with SSHTunnelForwarder(...) — stays alive on the heap while your with block runs, and gets resumed later. 
     #in a contextmanager Class, everything appearing after "yield" is the "teardown" or __exit__ method

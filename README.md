@@ -1,6 +1,8 @@
+Direct csv injections into tables you name into the mysql db. Once there, you can pull up the table in Superset and build dashboards on it.
+
 Effectively, you'll be making a copy of the package directory in your own machine, then "building" up some of the configs (handled by uv), then running it.
 
-## Note: do not clone into iCloud Drive, Dropbox, or pCloud on your local; this messes with the path discovery within uv. A safe spot is within your Home directory, away from 'Documents'
+### Note: do not clone into iCloud Drive, Dropbox, or pCloud on your local; this messes with the path discovery within uv. A safe spot is within your Home directory, away from 'Documents'
 
 Installing uv: https://docs.astral.sh/uv/getting-started/installation/
 
@@ -27,7 +29,7 @@ place secrets either as a .env or .yaml file; 3 options:
 You can track how this is handled on config.py
 
 
-Commands
+## Commands
 uv run db-injector '/Users/casita/Downloads/2026 Spoilage - Sheet1.csv' test_spoilage --if-exists replace
 
 command example:
@@ -36,7 +38,7 @@ command options:
 
 command help:
 
-Warning on SSH connection
+### Warning on SSH connection
 The ssh_config_file defaults to '~/.ssh/config', so any Host 67.207.80.236 stanza on the user's machine can silently substitute a different username, port, identity file, or proxy.
 
 Server-side, this only works while the droplet's sshd_config has PasswordAuthentication yes. Standard hardening turns that off, and the moment someone does, the package breaks with an authentication error rather than anything descriptive. This can be checked at /etc/ssh/sshd_config on the server.
