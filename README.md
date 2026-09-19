@@ -30,7 +30,7 @@ You can track how this is handled on config.py
 
 
 ## Commands
-uv run db-injector '/Users/casita/Downloads/2026 Spoilage - Sheet1.csv' test_spoilage --if-exists replace
+uv run db-injector '/Users/casita/Downloads/2026 Spoilage - Sheet1.csv' spoilage_v1 --if-exists replace
 
 command example:
 
