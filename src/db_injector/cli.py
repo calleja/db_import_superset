@@ -133,7 +133,15 @@ def build_parser() -> ArgumentParser:
     parser.add_argument(
         "--yaml-path",
         default=None,
-        help="YAML file holding DB credentials; defaults to secrets/.env",
+        help="YAML file holding the SSH and DB credentials; defaults to secrets/.env",
+    )
+    parser.add_argument(
+        "--env-path",
+        default=None,
+        help=(
+            "explicit path to the .env file, skipping the search for secrets/.env "
+            "in this directory and its ancestors"
+        ),
     )
     parser.add_argument(
         "--if-exists",
@@ -167,12 +175,15 @@ def inject() -> int:
     # Tunnel stays open only for the write itself.
     try:
         #"with" evaluates the content expression to get a context manager object; the object is expected to contain an __enter__() and __exit__() method
-        with establish_ssh.db_tunnel() as tunnel:
+        with establish_ssh.db_tunnel(
+            env_path=args.env_path, yaml_path=args.yaml_path
+        ) as tunnel:
             #the next few lines are executed after setup of the tunnel; the "yield" statement (of the tunnel) suspends the function until the with block is exited
             print(f"[inject] Tunnel active on 127.0.0.1:{tunnel.local_bind_port}")
             engine = db_interactor.build_engine(
-                #find where yaml_path is being handled
-                port=tunnel.local_bind_port, yaml_path=args.yaml_path
+                port=tunnel.local_bind_port,
+                yaml_path=args.yaml_path,
+                env_path=args.env_path,
             )
             try:
                 # engine.begin() wraps the write in a transaction, so a partial failure rolls back instead of leaving a half-replaced table.

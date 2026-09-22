@@ -3,6 +3,7 @@ Direct csv injections into tables you name into the mysql db. Once there, you ca
 Effectively, you'll be making a copy of the package directory in your own machine, then "building" up some of the configs (handled by uv), then running it.
 
 ### Note: do not clone into iCloud Drive, Dropbox, or pCloud on your local; this messes with the path discovery within uv. A safe spot is within your Home directory, away from 'Documents'
+### On Windows the same applies to OneDrive, which by default redirects 'Documents' into the synced folder. Clone to something like C:\dev\db_injector instead.
 
 Installing uv: https://docs.astral.sh/uv/getting-started/installation/
 
@@ -24,9 +25,30 @@ NOTE: ssh will also rely on public/private keys that you store on your local. SS
 
 place secrets either as a .env or .yaml file; 3 options:
   - secrets/.env directly on the path or project directory
-  - a .yaml file in your filesystem which must be explicitly cited 
-  - as environmental variables 
+  - a .yaml file in your filesystem which must be explicitly cited with --yaml-path
+  - as environmental variables
+  - (or point at a .env anywhere with --env-path, which skips the directory search)
 You can track how this is handled on config.py
+
+The .env needs `KEY=value` lines. The .yaml needs `KEY: value` — with a space
+after the colon, or YAML reads the whole file as one string.
+
+### Windows: the .env filename
+File Explorer hides known extensions and Notepad appends `.txt` on save, so a
+file you believe is `.env` is often really `.env.txt`, and downloads of a dotfile
+often arrive as `env` or `_env`. Check the real names from PowerShell, which
+never renames anything:
+
+    Get-ChildItem -Force .\secrets | Select-Object Name, Length
+    uv run python -c "from dotenv import dotenv_values; print(list(dotenv_values(r'secrets\.env')))"
+
+The second command must list all nine keys. If it prints `[]` the file is empty
+or not in `KEY=value` form. Writing the file from Windows PowerShell 5.1 with
+`-Encoding utf8` adds a BOM that corrupts the first key — use `-Encoding ascii`
+there, or `utf8NoBOM` on PowerShell 7.
+
+Setting the env var on Windows is `$env:DB_INJECTOR_ENV = "C:\path\to\.env"`,
+not `export`.
 
 
 ## Commands

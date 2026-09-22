@@ -93,10 +93,12 @@ def ssh_tunnel(ip, username, password, command):
 from contextlib import contextmanager
 from typing import Any
 
-from .config import find_env_file
+from .config import find_env_file, load_env_file, load_yaml_file
+
+SSH_KEYS = ("VM_URL", "VM_USER", "VM_PASSWORD")
 
 
-def ssh_config(env_path: Path | None = None) -> dict[str, Any]:
+def ssh_config(env_path: Path | None = None, yaml_path: str | None = None) -> dict[str, Any]:
     """Load and validate the three credentials needed to open the tunnel.
 
     Parameters
@@ -105,27 +107,39 @@ def ssh_config(env_path: Path | None = None) -> dict[str, Any]:
         Override the secrets location. When omitted, config.find_env_file()
         checks $DB_INJECTOR_ENV and then searches upward from the current
         directory, so this works from anywhere and under a non-editable install.
+    yaml_path
+        Read the VM_* keys from this YAML file instead of any .env. The CLI's
+        --yaml-path used to reach only db_interactor, which left the tunnel
+        demanding a .env that the YAML route was supposed to replace.
 
     Returns a dict with "host", "user" and "password" keys. Called by
     db_tunnel() below — callers of db_tunnel() never need this directly.
     Raises early (before any network I/O) if a credential is missing.
     """
-    path = find_env_file(env_path) #function simply returns a likely viable full path string
-    if not load_dotenv(path):
-        raise FileNotFoundError(f"Could not load environment file: {path}")
-    required = ("VM_URL", "VM_USER", "VM_PASSWORD")
-    missing = [name for name in required if not os.getenv(name)]
+    if yaml_path is not None:
+        config = load_yaml_file(yaml_path, SSH_KEYS)
+    else:
+        load_env_file(find_env_file(env_path))
+        # Read back through the environment, not the file: that is what lets the
+        # keys come from real exported variables with no secrets file at all.
+        config = {key: os.getenv(key) for key in SSH_KEYS}
+    missing = [key for key, value in config.items() if value in (None, "")]
     if missing:
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
     return {
-        "host": os.getenv("VM_URL"),
-        "user": os.getenv("VM_USER"),
-        "password": os.getenv("VM_PASSWORD"),
+        "host": config["VM_URL"],
+        "user": config["VM_USER"],
+        "password": config["VM_PASSWORD"],
     }
 
 
 @contextmanager
-def db_tunnel(remote_port: int = 3306, local_port: int = 0, env_path: Path | None = None):
+def db_tunnel(
+    remote_port: int = 3306,
+    local_port: int = 0,
+    env_path: Path | None = None,
+    yaml_path: str | None = None,
+):
     """Open an SSH tunnel to the droplet and yield the live forwarder.
 
     Parameters
@@ -135,7 +149,7 @@ def db_tunnel(remote_port: int = 3306, local_port: int = 0, env_path: Path | Non
     local_port
         Local port to listen on. 0 asks the OS for any free port, which avoids collisions with a stale listener on 5433; read the port the OS actually
         assigned back from `tunnel.local_bind_port`.
-    env_path
+    env_path, yaml_path
         Passed straight through to ssh_config().
 
     Downstream usage — cli.py wraps the whole injection in this block and feeds the assigned port to db_interactor.build_engine():
@@ -146,7 +160,7 @@ def db_tunnel(remote_port: int = 3306, local_port: int = 0, env_path: Path | Non
 
     Every database operation must finish inside the block. The forwarder is torn down on exit and any connection opened through it dies with it, so dispose of engines before leaving.
     """
-    cfg = ssh_config(env_path)
+    cfg = ssh_config(env_path, yaml_path)
     #since the parent function carries the @contextmanager decorator, this will function like a context manager object (will implicitly contain an __enter__ and __exit__ method)
     with SSHTunnelForwarder(
         ssh_address_or_host=(cfg["host"], 22),

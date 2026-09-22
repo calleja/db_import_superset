@@ -86,12 +86,12 @@ def inject_data(filepath, table_name, yaml_path=None):
 from pathlib import Path
 from typing import Any
 
-from .config import find_env_file
+from .config import find_env_file, load_env_file, load_yaml_file
 
 DB_KEYS = ("DB_USER", "DB_PASSWORD", "HOST", "PORT", "DATABASE")
 
 
-def db_config(yaml_path: str | None = None) -> dict[str, Any]:
+def db_config(yaml_path: str | None = None, env_path: str | Path | None = None) -> dict[str, Any]:
     """Collect the full database credential set from .env or a YAML file.
 
     Parameters
@@ -99,20 +99,19 @@ def db_config(yaml_path: str | None = None) -> dict[str, Any]:
     yaml_path
         When None, read the .env located by config.find_env_file(). Otherwise
         read the same five keys from that YAML file — the CLI's --yaml-path.
+    env_path
+        An explicit .env location, bypassing the upward search entirely — the
+        CLI's --env-path.
 
     Returns all of DB_KEYS, and raises if any is missing or blank, so a typo in
     the secrets file surfaces here rather than as an opaque connection error.
     Consumed by build_engine() below.
     """
     if yaml_path is None:
-        env_file = find_env_file()
-        if not load_dotenv(env_file):
-            raise FileNotFoundError(f"Could not load environment file: {env_file}")
+        load_env_file(find_env_file(env_path))
         config = {key: os.getenv(key) for key in DB_KEYS}
     else:
-        with open(yaml_path, "r") as file:
-            yaml_data = yaml.safe_load(file)
-        config = {key: yaml_data.get(key) for key in DB_KEYS}
+        config = load_yaml_file(yaml_path, DB_KEYS)
 
     missing = [key for key, value in config.items() if value in (None, "")]
     if missing:
@@ -140,7 +139,12 @@ def read_source(filepath: str) -> pd.DataFrame:
     )
 
 
-def build_engine(port: int | None = None, yaml_path: str | None = None, **engine_kwargs):
+def build_engine(
+    port: int | None = None,
+    yaml_path: str | None = None,
+    env_path: str | Path | None = None,
+    **engine_kwargs,
+):
     """Build a SQLAlchemy engine aimed at the tunnel's local port.
 
     Parameters
@@ -149,7 +153,7 @@ def build_engine(port: int | None = None, yaml_path: str | None = None, **engine
         The live port from `establish_ssh.db_tunnel()` (tunnel.local_bind_port).
         Falls back to the static PORT in the secrets file when omitted, which is
         only correct if you already have a tunnel open on that fixed port.
-    yaml_path
+    yaml_path, env_path
         Forwarded to db_config().
     **engine_kwargs
         Passed to create_engine(); e.g. poolclass=NullPool to avoid pooled
@@ -159,7 +163,7 @@ def build_engine(port: int | None = None, yaml_path: str | None = None, **engine
     Build it inside the `with db_tunnel()` block and dispose of it before the
     block exits.
     """
-    config = db_config(yaml_path)
+    config = db_config(yaml_path, env_path)
     url = (
         f"mysql+pymysql://{config['DB_USER']}:{config['DB_PASSWORD']}"
         f"@{config['HOST']}:{port or config['PORT']}/{config['DATABASE']}"
