@@ -54,11 +54,22 @@ not `export`.
 ## Commands
 uv run db-injector '/Users/casita/Downloads/2026 Spoilage - Sheet1.csv' spoilage_v1 --if-exists replace
 
-command example:
+Store the association-rule list columns as MySQL JSON. Repeat `--dtype` once per column. `read_csv` brings those cells back as text (`['Cheese', 'PRODUCE']` or `["Cheese", "PRODUCE"]`); columns marked `JSON` are parsed into lists before insert so MySQL stores arrays.
 
-command options:
+```bash
+uv run db-injector \
+  '/Users/casita/Documents/gitdev/merchAnalysis/cart_analysis/data/ass_df.csv' \
+  assoc_table \
+  --if-exists replace \
+  --dtype antecedents_list=JSON \
+  --dtype consequents_list=JSON
+```
 
-command help:
+`--dtype` applies when the table is created (`--if-exists replace` or `fail`). `append` keeps the column types already on the server. Type names: `JSON`, `TEXT`, `INTEGER`, `FLOAT`, `BOOLEAN`, `DATE`, `DATETIME`.
+
+```bash
+uv run db-injector --help
+```
 
 ### Warning on SSH connection
 The ssh_config_file defaults to '~/.ssh/config', so any Host 67.207.80.236 stanza on the user's machine can silently substitute a different username, port, identity file, or proxy.

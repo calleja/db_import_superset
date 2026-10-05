@@ -149,6 +149,17 @@ def build_parser() -> ArgumentParser:
         default="replace",
         help="what to do when the destination table already exists (default: replace)",
     )
+    parser.add_argument(
+        "--dtype",
+        action="append",
+        default=None,
+        metavar="COLUMN=TYPE",
+        help=(
+            "SQL type override for one column, repeatable. "
+            "TYPE is JSON, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, or DATETIME. "
+            "Example: --dtype antecedents_list=JSON --dtype consequents_list=JSON"
+        ),
+    )
     return parser
 
 
@@ -172,6 +183,13 @@ def inject() -> int:
         print(f"[inject] Failure — could not read {args.filepath}: {e}")
         return 1
 
+    # Resolve COLUMN=TYPE flags before the tunnel so a bad name fails immediately.
+    try:
+        dtypes = db_interactor.resolve_dtypes(args.dtype, df.columns)
+    except Exception as e:
+        print(f"[inject] Failure — invalid --dtype: {e}")
+        return 1
+
     # Tunnel stays open only for the write itself.
     try:
         #"with" evaluates the content expression to get a context manager object; the object is expected to contain an __enter__() and __exit__() method
@@ -190,8 +208,15 @@ def inject() -> int:
                 # engine = sqlalchemy engine object's native method "begin"
                 with engine.begin() as conn:
                     rows = db_interactor.write_table(
-                        df, args.table_name, conn, if_exists=args.if_exists
+                        df,
+                        args.table_name,
+                        conn,
+                        if_exists=args.if_exists,
+                        dtype=dtypes,
                     )
+                    # Read types back from MySQL. df.dtypes is still the CSV
+                    # types (str for the list columns) and does not show JSON.
+                    column_types = db_interactor.table_column_types(conn, args.table_name)
             finally:
                 # Dispose inside the tunnel: pooled sockets must not outlive it.
                 engine.dispose()
@@ -200,9 +225,9 @@ def inject() -> int:
         return 1
 
     print(f"[inject] Success — wrote {rows} rows to '{args.table_name}'")
-    print("[inject] Fields and datatypes:")
-    for name, dtype in df.dtypes.items():
-        print(f"    {name}: {dtype}")
+    print("[inject] MySQL column types:")
+    for name, sql_type in column_types:
+        print(f"    {name}: {sql_type}")
     return 0 #return 0 means success to the shell
 
 

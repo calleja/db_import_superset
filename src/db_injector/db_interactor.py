@@ -83,12 +83,31 @@ def inject_data(filepath, table_name, yaml_path=None):
 # argument, which is what keeps these functions testable against a local or
 # in-memory database with no SSH involved.
 
+import ast
+import json
+import math
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Text
+from sqlalchemy.dialects.mysql import JSON as MySQLJSON
 
 from .config import find_env_file, load_env_file, load_yaml_file
 
 DB_KEYS = ("DB_USER", "DB_PASSWORD", "HOST", "PORT", "DATABASE")
+
+# CLI type names the shell can pass. Values are SQLAlchemy type classes, which
+# is what DataFrame.to_sql expects in its dtype dict. Names are matched
+# case-insensitively; nothing here is eval'd.
+DTYPE_BY_NAME = {
+    "JSON": MySQLJSON,
+    "TEXT": Text,
+    "INTEGER": Integer,
+    "FLOAT": Float,
+    "BOOLEAN": Boolean,
+    "DATE": Date,
+    "DATETIME": DateTime,
+}
 
 
 def db_config(yaml_path: str | None = None, env_path: str | Path | None = None) -> dict[str, Any]:
@@ -171,7 +190,81 @@ def build_engine(
     return create_engine(url, **engine_kwargs)
 
 
-def write_table(df: pd.DataFrame, table_name: str, con, if_exists: str = "replace") -> int:
+def resolve_dtypes(pairs: list[str] | None, columns) -> dict[str, Any] | None:
+    """Turn repeated COLUMN=TYPE CLI values into the dict to_sql calls dtype.
+
+    Each pair is one --dtype flag. A later flag for the same column replaces
+    the earlier one. Raises before any database connection when the type name
+    is unknown, the '=' is missing, or the column is not in the frame.
+    """
+    if not pairs:
+        return None
+
+    resolved: dict[str, Any] = {}
+    known = ", ".join(DTYPE_BY_NAME)
+    for pair in pairs:
+        # Split once so a type name is never broken apart. Column names do not
+        # contain '='; a name with spaces arrives as one argv token.
+        column, sep, type_name = pair.partition("=")
+        column, type_name = column.strip(), type_name.strip()
+        if not sep or not column or not type_name:
+            raise ValueError(f"--dtype must be COLUMN=TYPE, got {pair!r}")
+        type_class = DTYPE_BY_NAME.get(type_name.upper())
+        if type_class is None:
+            raise ValueError(f"Unknown dtype {type_name!r}. Expected one of: {known}")
+        if column not in columns:
+            raise ValueError(f"Column {column!r} is not in the source file")
+        resolved[column] = type_class
+    return resolved
+
+
+def _parse_json_cell(value: Any) -> Any:
+    """Turn one CSV cell into a Python object SQLAlchemy can store as JSON.
+
+    read_csv leaves list columns as text. json.dumps on that text would store
+    a JSON string instead of an array. Accept real JSON first, then Python
+    literal text such as "['Cheese', 'PRODUCE']".
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if isinstance(value, (list, dict)):
+        return value
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text == "":
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(f"Could not parse JSON value {value!r}") from exc
+
+
+def _coerce_json_columns(df: pd.DataFrame, dtype: dict[str, Any] | None) -> pd.DataFrame:
+    """Parse cells only for columns the caller marked JSON. Other columns stay put."""
+    if not dtype:
+        return df
+    json_columns = [name for name, type_class in dtype.items() if type_class is MySQLJSON]
+    if not json_columns:
+        return df
+    # Copy so a failed insert does not leave the caller's frame half-parsed.
+    prepared = df.copy()
+    for name in json_columns:
+        prepared[name] = prepared[name].map(_parse_json_cell)
+    return prepared
+
+
+def write_table(
+    df: pd.DataFrame,
+    table_name: str,
+    con,
+    if_exists: str = "replace",
+    dtype: dict[str, Any] | None = None,
+) -> int:
     """Write a DataFrame to table_name over an existing connection.
 
     Parameters
@@ -185,11 +278,29 @@ def write_table(df: pd.DataFrame, table_name: str, con, if_exists: str = "replac
         'replace' drops and recreates the table, letting pandas re-infer column
         types — any indexes or constraints on the old table are lost. Use
         'append' to preserve the existing schema.
+    dtype
+        Optional column name to SQLAlchemy type class, already resolved from
+        --dtype flags. Applied when the table is created (if_exists replace or
+        fail). append keeps the existing column types.
 
     Returns the number of rows written, which cli.py reports to the user.
 
     This is the appended counterpart to the original inject_data() above; the
     two are meant to be consolidated once you settle on a name.
     """
-    df.to_sql(table_name, con=con, if_exists=if_exists, index=False)
+    df = _coerce_json_columns(df, dtype)
+    df.to_sql(table_name, con=con, if_exists=if_exists, index=False, dtype=dtype)
     return len(df)
+
+
+def table_column_types(con, table_name: str) -> list[tuple[str, str]]:
+    """Column names and SQL types as the database reports them after the write.
+
+    The DataFrame's dtypes stay whatever read_csv inferred (often str). Those
+    are not the table types. --dtype JSON is applied in to_sql, so the type
+    to report is the one on the server.
+    """
+    from sqlalchemy import inspect
+
+    inspector = inspect(con)
+    return [(col["name"], str(col["type"])) for col in inspector.get_columns(table_name)]

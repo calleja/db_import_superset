@@ -86,3 +86,40 @@ def test_write_table_writes_rows_and_returns_count():
     assert rows == 2
     with engine.connect() as conn:
         assert len(pd.read_sql("SELECT * FROM people", conn)) == 2
+
+
+def test_resolve_dtypes_maps_repeated_flags_and_rejects_unknown():
+    columns = ["antecedents_list", "consequents_list", "support"]
+    resolved = db_interactor.resolve_dtypes(
+        ["antecedents_list=JSON", "consequents_list=json", "support=FLOAT"],
+        columns,
+    )
+    assert resolved["antecedents_list"] is db_interactor.MySQLJSON
+    assert resolved["consequents_list"] is db_interactor.MySQLJSON
+    assert resolved["support"] is db_interactor.Float
+    with pytest.raises(ValueError, match="Unknown dtype"):
+        db_interactor.resolve_dtypes(["antecedents_list=SET"], columns)
+    with pytest.raises(ValueError, match="not in the source file"):
+        db_interactor.resolve_dtypes(["missing=JSON"], columns)
+
+
+def test_write_table_parses_json_list_text():
+    engine = create_engine("sqlite://")
+    df = pd.DataFrame({
+        "antecedents_list": ["['Cheese', 'Produce Herbs and Spices, Fresh']"],
+        "consequents_list": ['["PRODUCE"]'],
+        "support": [0.2],
+    })
+    dtype = db_interactor.resolve_dtypes(
+        ["antecedents_list=JSON", "consequents_list=JSON"],
+        df.columns,
+    )
+    with engine.begin() as conn:
+        db_interactor.write_table(df, "rules", conn, dtype=dtype)
+    with engine.connect() as conn:
+        stored = pd.read_sql("SELECT antecedents_list, consequents_list FROM rules", conn)
+        types = dict(db_interactor.table_column_types(conn, "rules"))
+    assert stored.loc[0, "antecedents_list"] == '["Cheese", "Produce Herbs and Spices, Fresh"]'
+    assert stored.loc[0, "consequents_list"] == '["PRODUCE"]'
+    assert types["antecedents_list"] == "JSON"
+    assert types["consequents_list"] == "JSON"
